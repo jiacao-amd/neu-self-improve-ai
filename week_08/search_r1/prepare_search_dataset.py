@@ -1,93 +1,81 @@
-"""Convert the official Search-R1 NQ + HotpotQA parquet files to VeRL format."""
+"""Convert the official Search-R1 NQ + HotpotQA parquet files to VeRL format.
+
+Reads `train.parquet`/`test.parquet` from `--source-dir` (or downloads them from
+the Hugging Face dataset repo) and keeps only NQ and HotpotQA rows. The released
+test parquet also contains Bamboogle and other benchmarks; those stay untouched
+until final evaluation. Rows are formatted with `format_searchr1_rows`, the same
+prompt used by every training run.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
-from huggingface_hub import hf_hub_download
+
+from format_searchr1_rows import format_frame
 
 
-SYSTEM_PROMPT = (
-    "You answer multi-hop questions using the search tool when evidence is needed. "
-    "Think step by step. Call the search tool with a concise query; use the returned "
-    "documents as evidence and search again when needed. Finish with exactly one "
-    "<answer>short answer</answer> block. Do not put retrieved text in your answer."
-)
+IN_DOMAIN = {"nq", "hotpotqa"}
 
 
-def answers_from_row(row: dict[str, Any]) -> list[str]:
-    reward = row.get("reward_model")
-    candidates: Any = reward.get("ground_truth") if isinstance(reward, dict) else None
-    if isinstance(candidates, dict):
-        candidates = candidates.get("target")
-        if candidates is None:
-            candidates = reward.get("ground_truth", {}).get("answers")
-    if hasattr(candidates, "tolist"):
-        candidates = candidates.tolist()
-    if candidates is None:
-        candidates = row.get("golden_answers")
-        if hasattr(candidates, "tolist"):
-            candidates = candidates.tolist()
-        if candidates is None or candidates == []:
-            candidates = row.get("answer")
-    if isinstance(candidates, str):
-        try:
-            parsed = json.loads(candidates)
-            candidates = parsed if isinstance(parsed, list) else [candidates]
-        except json.JSONDecodeError:
-            candidates = [candidates]
-    if not isinstance(candidates, (list, tuple)):
-        candidates = [str(candidates)] if candidates is not None else []
-    return [str(item).strip() for item in candidates if str(item).strip()]
+def load_split(args: argparse.Namespace, split: str) -> pd.DataFrame:
+    if args.source_dir:
+        path = args.source_dir / f"{split}.parquet"
+    else:
+        from huggingface_hub import hf_hub_download
+
+        path = hf_hub_download(repo_id=args.hf_repo_id, filename=f"{split}.parquet", repo_type="dataset")
+    frame = pd.read_parquet(path)
+    return frame[frame["data_source"].astype(str).isin(IN_DOMAIN)].reset_index(drop=True)
 
 
-def convert_row(row: dict[str, Any], split: str, index: int) -> dict[str, Any]:
-    question = str(row.get("question", "")).strip()
-    answers = answers_from_row(row)
-    if not question or not answers:
-        raise ValueError(f"{split}[{index}] is missing question or answer aliases")
-    return {
-        "data_source": "searchR1_nq_hotpotqa",
-        "agent_name": "tool_agent",
-        "prompt": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": question},
-        ],
-        "ability": "multi_hop_qa",
-        "reward_model": {"style": "rule", "ground_truth": {"target": answers}},
-        "extra_info": {"split": split, "index": index, "question": question},
-    }
+def write(frame: pd.DataFrame, split: str, destination: Path) -> int:
+    converted = format_frame(frame, split)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(converted).to_parquet(destination, index=False)
+    return len(converted)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--hf-repo-id", default="PeterJinGo/nq_hotpotqa_train")
+    parser.add_argument("--source-dir", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, default=Path("data/searchr1_processed"))
-    parser.add_argument("--cache-dir", type=Path, default=None)
+    parser.add_argument("--val-sample", type=int, default=512, help="Rows in the fixed validation subset used during training")
+    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
-    args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    for split in ("train", "test"):
-        local_file = hf_hub_download(
-            repo_id=args.hf_repo_id,
-            filename=f"{split}.parquet",
-            repo_type="dataset",
-            cache_dir=str(args.cache_dir) if args.cache_dir else None,
-        )
-        source = pd.read_parquet(local_file)
-        # Keep an in-domain validation split. The released test parquet also
-        # contains Bamboogle and other benchmarks, which must stay untouched
-        # until final evaluation.
-        if "data_source" in source.columns:
-            source = source[source["data_source"].astype(str).isin({"nq", "hotpotqa"})]
-        converted = [convert_row(row, split, i) for i, row in enumerate(source.to_dict("records"))]
-        destination = args.output_dir / f"{split}.parquet"
-        pd.DataFrame(converted).to_parquet(destination, index=False)
-        print(f"{split}: {len(converted)} rows -> {destination}")
+    train = load_split(args, "train")
+    test = load_split(args, "test")
+    bamboogle_questions = set(pd.read_csv(Path(__file__).parent / "data" / "bamboogle.csv")["question"].str.strip().str.lower())
+    for name, frame in (("train", train), ("test", test)):
+        leaked = frame["question"].str.strip().str.lower().isin(bamboogle_questions).sum()
+        if leaked:
+            raise ValueError(f"{name} contains {leaked} Bamboogle questions")
+
+    counts = {
+        "train": write(train, "train", args.output_dir / "train.parquet"),
+        "test": write(test, "test", args.output_dir / "test.parquet"),
+        "val_sample": write(
+            test.sample(n=min(args.val_sample, len(test)), random_state=args.seed), "test", args.output_dir / "val_sample.parquet"
+        ),
+        "smoke_train": write(train.head(2), "train", args.output_dir / "smoke_train.parquet"),
+        "smoke_test": write(test.head(1), "test", args.output_dir / "smoke_test.parquet"),
+    }
+    summary = {
+        "source": str(args.source_dir or args.hf_repo_id),
+        "kept_data_sources": sorted(IN_DOMAIN),
+        "train_by_source": train["data_source"].value_counts().to_dict(),
+        "test_by_source": test["data_source"].value_counts().to_dict(),
+        "rows_written": counts,
+        "bamboogle_overlap": 0,
+        "val_sample_seed": args.seed,
+    }
+    (args.output_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    print(json.dumps(summary, indent=2))
 
 
 if __name__ == "__main__":

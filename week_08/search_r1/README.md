@@ -60,16 +60,30 @@ Replace this line with the full names of every group member before submission: *
 
 ## Current run status
 
-- The source documents and assignment requirements have been reviewed.
-- The 125-row Bamboogle evaluation file and the paper's target scores are recorded.
-- Local smoke checks pass for answer extraction/EM, data conversion, retriever
-  request formatting, launcher configuration, and Bamboogle CSV integrity.
-- A one-step synthetic-text LoRA smoke passed on a Modal NVIDIA A10; it did not
-  run VeRL, Search-R1 retrieval, PPO/GRPO, or Bamboogle evaluation. Details are
-  in `results/modal_gpu_smoke.json`.
-- The latest post-run billing summary showed $1,450.34 billed this month while
-  the supplied workspace banner showed a $1,200 budget. The workspace is
-  shared; confirm its available budget before further GPU training.
+Completed on a reserved 4x NVIDIA GB300 node (2026-11-20); see
+[`REPLICATION_REPORT.md`](REPLICATION_REPORT.md#results) for the full results
+and [`RUNBOOK.md`](RUNBOOK.md#gb300-local-execution-what-was-actually-run) for
+the exact commands.
+
+| Bamboogle EM (125 questions) | Measured | Paper |
+| --- | ---: | ---: |
+| Direct inference, Qwen2.5-3B-Instruct | 0.032 | 0.024 |
+| Untrained Qwen2.5-3B-Instruct + search tool | 0.184 | — |
+| Published Search-R1 PPO checkpoint | 0.240 | 0.264 |
+| Published Search-R1 GRPO checkpoint | 0.344 | 0.232 |
+| Ours: LoRA GRPO, 150 steps | 0.312 | (0.232, full FT) |
+| Ours: LoRA PPO, 150 steps | 0.208 | (0.264, full FT) |
+
+- One-step GRPO and PPO integration smokes passed (real retrieval, logged tool
+  calls and EM rewards, LoRA checkpoint, exported PEFT adapter).
+- GRPO and PPO each trained for 150 steps (64 prompts x 5 rollouts) with
+  identical LoRA settings; logs, metrics, adapters and Bamboogle predictions
+  are in `results/runs/` and `results/bamboogle/`.
+- The tiny-zero-lora starter ran for a reduced 60 steps on its own pinned
+  stack (`results/tiny_zero_starter/`); it is reported separately.
+- Earlier Modal work (A10 smoke, spend-limit rejection) is unchanged in
+  `results/modal_gpu_smoke.json`; no further Modal compute was used.
+- Group member names are still **TODO** (see above).
 
 ## Sources
 
@@ -155,7 +169,8 @@ The Modal GPU sanity smoke passed: Qwen2.5-3B-Instruct loaded on an NVIDIA A10,
 and one synthetic-text LoRA forward/backward/update succeeded. The record is
 in [`results/modal_gpu_smoke.json`](results/modal_gpu_smoke.json). This did not
 exercise VeRL, retrieval, Search-R1 rollouts, PPO/GRPO advantages, or a saved
-adapter. Those still require a short VeRL integration smoke on CUDA.
+adapter; the VeRL integration smokes and full runs were later done on GB300
+(see "Current run status").
 
 The supplied Modal screenshot showed 96% of a $1,200 workspace budget used.
 After the smoke, the workspace billing summary showed $1,450.34 billed this
@@ -163,6 +178,5 @@ month. A subsequent VeRL job launch was rejected with `Workspace has exceeded
 its spend limit`; no VeRL GPU job or container was created. The post-run
 active-container check was empty. Billing is shared and changed while other
 students were using the workspace, so the charge cannot be attributed to this
-smoke alone. No PPO/GRPO run or Bamboogle score has been produced. An
-Owner/Manager must reset or raise the effective spend limit before further
-GPU use.
+smoke alone. No further Modal compute was used; all PPO/GRPO training and
+Bamboogle scores come from the GB300 node.

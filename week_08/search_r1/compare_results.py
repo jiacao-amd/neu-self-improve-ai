@@ -1,4 +1,11 @@
-"""Combine local evaluator summaries with Search-R1 paper reference scores."""
+"""Combine local evaluator summaries with Search-R1 paper reference scores.
+
+Each `--run` is `LABEL=SUMMARY.json` or `LABEL=SUMMARY.json@PAPER_ROW`, where
+PAPER_ROW is the 0-based row of `results/paper_reference.csv` that the run
+should be compared against (omit when the paper has no matching number).
+Writes `comparison.csv` and a grouped bar chart `comparison.png` in which each
+method shows the measured score next to its paper reference.
+"""
 
 from __future__ import annotations
 
@@ -10,52 +17,44 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 PAPER = HERE / "results" / "paper_reference.csv"
+SURFACE = "#fcfcfb"
+TEXT_PRIMARY = "#0b0b0b"
+TEXT_SECONDARY = "#52514e"
+GRID = "#e4e3df"
+MEASURED = "#2a78d6"
+REFERENCE = "#b9b8b3"
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Compare measured Bamboogle summaries against paper targets."
-    )
-    parser.add_argument(
-        "--run",
-        action="append",
-        default=[],
-        metavar="LABEL=SUMMARY.json",
-        help="Evaluator summary and display label; repeat for each run.",
-    )
+    parser = argparse.ArgumentParser(description="Compare measured Bamboogle summaries against paper targets.")
+    parser.add_argument("--run", action="append", default=[], metavar="LABEL=SUMMARY.json[@PAPER_ROW]")
     parser.add_argument("--output-dir", type=Path, default=HERE / "results")
     args = parser.parse_args()
 
-    rows: list[dict[str, str | int | float]] = []
     with PAPER.open(encoding="utf-8", newline="") as handle:
-        for paper_row in csv.DictReader(handle):
-            rows.append(
-                {
-                    "label": f"Paper: {paper_row['method']} ({paper_row['algorithm']})",
-                    "source": "paper reference",
-                    "method": paper_row["method"],
-                    "algorithm": paper_row["algorithm"],
-                    "examples": 125,
-                    "correct": int(paper_row["correct_of_125"]),
-                    "exact_match": float(paper_row["accuracy"]),
-                }
-            )
+        paper_rows = list(csv.DictReader(handle))
 
+    rows: list[dict[str, object]] = []
     for item in args.run:
         if "=" not in item:
-            parser.error(f"--run must be LABEL=SUMMARY.json, got: {item}")
-        label, raw_path = item.split("=", 1)
-        summary_path = Path(raw_path)
-        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            parser.error(f"--run must be LABEL=SUMMARY.json[@PAPER_ROW], got: {item}")
+        label, raw = item.split("=", 1)
+        path, _, paper_index = raw.partition("@")
+        summary = json.loads(Path(path).read_text(encoding="utf-8"))
+        paper = paper_rows[int(paper_index)] if paper_index else None
         rows.append(
             {
                 "label": label,
-                "source": "measured run",
-                "method": summary.get("mode", "unknown"),
-                "algorithm": label,
+                "mode": summary.get("mode", "unknown"),
+                "model": summary.get("model"),
+                "adapter": summary.get("adapter"),
                 "examples": int(summary["examples"]),
                 "correct": int(summary["correct"]),
-                "exact_match": float(summary["exact_match"]),
+                "exact_match": round(float(summary["exact_match"]), 4),
+                "mean_search_calls": round(float(summary.get("mean_search_calls", 0.0)), 3),
+                "paper_reference_em": float(paper["accuracy"]) if paper else "",
+                "paper_reference_correct": int(paper["correct_of_125"]) if paper else "",
+                "paper_reference_source": f"{paper['method']} ({paper['algorithm']}), {paper['source']}" if paper else "",
             }
         )
 
@@ -66,35 +65,40 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(rows)
 
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError as exc:
-        raise SystemExit(
-            f"Wrote {csv_path}; install matplotlib to also create the chart."
-        ) from exc
+    import matplotlib
 
-    labels = [str(row["label"]) for row in rows]
-    scores = [float(row["exact_match"]) for row in rows]
-    colors = ["#9ca3af" if row["source"] == "paper reference" else "#2563eb" for row in rows]
-    fig, ax = plt.subplots(figsize=(max(9, len(rows) * 1.05), 5.5))
-    bars = ax.bar(range(len(rows)), scores, color=colors)
-    ax.set_ylabel("Bamboogle exact match")
-    ax.set_ylim(0, max(0.1, max(scores, default=0) * 1.2))
-    ax.set_xticks(range(len(rows)), labels, rotation=35, ha="right")
-    ax.set_title("Search-R1 Bamboogle results (paper references vs measured runs)")
-    ax.grid(axis="y", alpha=0.25)
-    for bar, row in zip(bars, rows):
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            bar.get_height(),
-            f"{float(row['exact_match']):.3f}\n{row['correct']}/{row['examples']}",
-            ha="center",
-            va="bottom",
-            fontsize=8,
-        )
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    width = 0.38
+    fig, ax = plt.subplots(figsize=(max(9, len(rows) * 1.6), 5.5), facecolor=SURFACE)
+    ax.set_facecolor(SURFACE)
+    for i, row in enumerate(rows):
+        ax.bar(i - width / 2 - 0.01, row["exact_match"], width, color=MEASURED,
+                          label="Measured (this run)" if i == 0 else None)
+        ax.text(i - width / 2 - 0.01, row["exact_match"] + 0.004, f"{row['exact_match']:.3f}\n{row['correct']}/125",
+                ha="center", va="bottom", fontsize=8, color=TEXT_PRIMARY)
+        if row["paper_reference_em"] != "":
+            ax.bar(i + width / 2 + 0.01, row["paper_reference_em"], width, color=REFERENCE,
+                   label="Paper reference" if "Paper reference" not in ax.get_legend_handles_labels()[1] else None)
+            ax.text(i + width / 2 + 0.01, row["paper_reference_em"] + 0.004, f"{row['paper_reference_em']:.3f}",
+                    ha="center", va="bottom", fontsize=8, color=TEXT_SECONDARY)
+    top = max([r["exact_match"] for r in rows] + [r["paper_reference_em"] or 0 for r in rows])
+    ax.set_ylim(0, max(0.1, top * 1.25))
+    ax.set_ylabel("Bamboogle exact match (125 questions)", color=TEXT_SECONDARY)
+    ax.set_xticks(range(len(rows)), [str(r["label"]) for r in rows], rotation=20, ha="right", color=TEXT_PRIMARY)
+    ax.tick_params(colors=TEXT_SECONDARY)
+    ax.grid(axis="y", color=GRID, linewidth=0.8)
+    ax.set_axisbelow(True)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color(GRID)
+    ax.legend(frameon=False, loc="upper left")
+    ax.set_title("Bamboogle EM: measured runs vs Search-R1 paper references", loc="left", color=TEXT_PRIMARY)
     fig.tight_layout()
     png_path = args.output_dir / "comparison.png"
-    fig.savefig(png_path, dpi=180)
+    fig.savefig(png_path, dpi=180, facecolor=SURFACE)
     plt.close(fig)
     print(f"Wrote {csv_path} and {png_path}")
 

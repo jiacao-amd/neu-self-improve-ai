@@ -31,43 +31,33 @@ SEARCH_SYSTEM = (
     "If you find no further external knowledge needed, you can directly provide the answer inside "
     "<answer> and </answer>, without detailed illustrations. For example, <answer> Beijing </answer>."
 )
-TOOL_SEARCH_SYSTEM = (
-    "Answer the question using evidence from Wikipedia. Call the search tool at least once, "
-    "and use its results before answering. Finish with exactly one "
-    "<answer>short answer</answer> block."
+DIRECT_INSTRUCTION = (
+    "Answer the given question directly, without searching. Provide only the final short answer "
+    "inside <answer> and </answer>, without detailed illustrations. For example, <answer> Beijing </answer>."
 )
-SEARCH_TOOL_SCHEMA = [
-    {
-        "type": "function",
-        "function": {
-            "name": "search",
-            "description": "Search Wikipedia for evidence relevant to the question.",
-            "parameters": {
-                "type": "object",
-                "properties": {"query": {"type": "string", "description": "Concise search query"}},
-                "required": ["query"],
-            },
-        },
-    }
-]
+# Tool mode must match training exactly: same system prompt as the VeRL
+# parquet rows, the same tool schema VeRL derives from `search_tool.search`,
+# and the same character-level middle truncation of tool responses.
+TOOL_RESPONSE_MAX_CHARS = 2048
 
 
 class StopOnMarkers(StoppingCriteria):
-    """Stop a single-sequence generation at a Search-R1 action boundary."""
+    """Stop a single-sequence generation once the decoded tail contains a marker.
 
-    def __init__(self, tokenizer: Any, markers: tuple[str, ...]):
-        self.patterns = [
-            tokenizer.encode(marker, add_special_tokens=False) for marker in markers
-        ]
+    Matching decoded text (not token ids) also catches markers that the
+    tokenizer merges with neighbouring characters, e.g. "</search>\n".
+    """
+
+    def __init__(self, tokenizer: Any, markers: tuple[str, ...], prompt_length: int, tail_tokens: int = 12):
+        self.tokenizer = tokenizer
+        self.markers = markers
+        self.prompt_length = prompt_length
+        self.tail_tokens = tail_tokens
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs: Any) -> bool:
-        row = input_ids[0]
-        for pattern in self.patterns:
-            if pattern and row.numel() >= len(pattern):
-                target = torch.tensor(pattern, device=row.device, dtype=row.dtype)
-                if torch.equal(row[-len(pattern) :], target):
-                    return True
-        return False
+        generated = input_ids[0, self.prompt_length :]
+        tail = self.tokenizer.decode(generated[-self.tail_tokens :], skip_special_tokens=True)
+        return any(marker in tail for marker in self.markers)
 
 
 def load_rows(path: Path, limit: int | None) -> list[dict[str, str]]:
@@ -78,16 +68,19 @@ def load_rows(path: Path, limit: int | None) -> list[dict[str, str]]:
 
 def make_prompt(tokenizer: Any, question: str, mode: str) -> str:
     if mode == "search":
-        # Match Search-R1's infer.py: a single raw instruction + question
-        # prompt (tokenizer adds the model's BOS token when encoding it).
+        # Match Search-R1's infer.py: the instruction + question as one user
+        # message, wrapped in the chat template for instruct models.
         normalized_question = question.strip()
         if normalized_question and not normalized_question.endswith("?"):
             normalized_question += "?"
-        return f"{SEARCH_SYSTEM} Question: {normalized_question}\n"
+        prompt = f"{SEARCH_SYSTEM} Question: {normalized_question}\n"
+        if tokenizer.chat_template:
+            prompt = tokenizer.apply_chat_template(
+                [{"role": "user", "content": prompt}], add_generation_prompt=True, tokenize=False
+            )
+        return prompt
 
-    messages = [
-        {"role": "user", "content": f"Answer the question concisely.\nQuestion: {question.strip()}"}
-    ]
+    messages = [{"role": "user", "content": f"{DIRECT_INSTRUCTION} Question: {question.strip()}"}]
     if tokenizer.chat_template:
         return tokenizer.apply_chat_template(
             messages, add_generation_prompt=True, tokenize=False
@@ -109,8 +102,8 @@ def get_search_text(url: str, query: str, topk: int, timeout: float) -> str:
         if not contents:
             continue
         title, _, body = contents.partition("\n")
-        formatted.append(f"Doc {index}(Title: {title}) {body}")
-    return "\n".join(formatted) or "No relevant documents were found."
+        formatted.append(f"Doc {index}(Title: {title}) {body}\n")
+    return "".join(formatted) or "No relevant documents were found."
 
 
 def generate_direct(model: Any, tokenizer: Any, prompt: str, max_new_tokens: int) -> str:
@@ -138,10 +131,12 @@ def generate_search(
 ) -> str:
     prefix = prompt
     chunks: list[str] = []
-    stop = StoppingCriteriaList([StopOnMarkers(tokenizer, ("</search>", "</answer>"))])
 
     for _ in range(max_turns):
         inputs = tokenizer(prefix, return_tensors="pt").to(model.device)
+        stop = StoppingCriteriaList(
+            [StopOnMarkers(tokenizer, ("</search>", "</answer>"), inputs.input_ids.shape[1])]
+        )
         with torch.inference_mode():
             output = model.generate(
                 **inputs,
@@ -154,6 +149,10 @@ def generate_search(
         generated = tokenizer.decode(
             output[0, inputs.input_ids.shape[1] :], skip_special_tokens=True
         )
+        # Cut at the first action boundary, like Search-R1's rollout postprocessing.
+        boundaries = [generated.index(m) + len(m) for m in ("</search>", "</answer>") if m in generated]
+        if boundaries:
+            generated = generated[: min(boundaries)]
         chunks.append(generated)
 
         if "</answer>" in generated or output[0, -1].item() == tokenizer.eos_token_id:
@@ -163,9 +162,26 @@ def generate_search(
         if match is None:
             break
         results = get_search_text(retrieval_url, match.group(1).strip(), topk, timeout)
-        prefix += generated + f"<information>{results}</information>\n\n"
+        # Search-R1 infer.py: prompt += "\n\n{output_text}<information>{results}</information>\n\n"
+        prefix += f"\n\n{generated}<information>{results}</information>\n\n"
+        chunks.append(f"<information>{results}</information>\n\n")
 
     return "".join(chunks)
+
+
+def tool_schema() -> list[dict[str, Any]]:
+    import search_tool  # noqa: F401  (registers the VeRL function tool)
+    from verl.tools.function_tool import get_function_tool
+
+    return [get_function_tool("search").tool_schema.model_dump(exclude_unset=True, exclude_none=True)]
+
+
+def truncate_tool_response(text: str, max_chars: int = TOOL_RESPONSE_MAX_CHARS) -> str:
+    """VeRL ToolAgentLoop's default `middle` truncation."""
+    if len(text) <= max_chars:
+        return text
+    half = max_chars // 2
+    return text[:half] + "...(truncated)..." + text[-half:]
 
 
 def generate_tool_search(
@@ -180,10 +196,18 @@ def generate_tool_search(
     timeout: float,
 ) -> tuple[str, int]:
     """Evaluate VeRL-trained policies using the same native function-tool protocol."""
+    import os
+
+    import search_tool
+    from format_searchr1_rows import SYSTEM_PROMPT
+
     if not tokenizer.chat_template:
         raise ValueError("Native search-tool evaluation requires a tokenizer chat template")
+    os.environ["SEARCH_R1_RETRIEVAL_URL"] = retrieval_url
+    os.environ["SEARCH_R1_TOPK"] = str(topk)
+    schemas = tool_schema()
     messages = [
-        {"role": "system", "content": TOOL_SEARCH_SYSTEM},
+        {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": question.strip()},
     ]
     chunks: list[str] = []
@@ -191,7 +215,7 @@ def generate_tool_search(
     for _ in range(max_turns):
         prompt = tokenizer.apply_chat_template(
             messages,
-            tools=SEARCH_TOOL_SCHEMA,
+            tools=schemas,
             add_generation_prompt=True,
             tokenize=False,
         )
@@ -208,6 +232,7 @@ def generate_tool_search(
         generated = tokenizer.decode(
             output[0, inputs.input_ids.shape[1] :], skip_special_tokens=False
         )
+        generated = generated.replace("<|im_end|>", "").replace("<|endoftext|>", "")
         chunks.append(generated)
         if "<tool_call>" not in generated:
             break
@@ -222,8 +247,9 @@ def generate_tool_search(
         if not query:
             break
         messages.append({"role": "assistant", "content": generated})
-        tool_result = get_search_text(retrieval_url, query, topk, timeout)
-        messages.append({"role": "tool", "name": "search", "content": tool_result})
+        tool_result = truncate_tool_response(search_tool.search(query))
+        messages.append({"role": "tool", "content": tool_result})
+        chunks.append(f"\n<tool_response>\n{tool_result}\n</tool_response>\n")
         search_calls += 1
     return "".join(chunks), search_calls
 
@@ -236,15 +262,22 @@ def main() -> None:
     parser.add_argument("--data", type=Path, default=DEFAULT_DATA)
     parser.add_argument("--output", type=Path, default=Path("results/predictions.jsonl"))
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--shard", default=None, metavar="K/N", help="Evaluate only contiguous shard K of N (merge with merge_eval_shards.py)")
     parser.add_argument("--max-new-tokens", type=int, default=512)
     parser.add_argument("--max-turns", type=int, default=4)
     parser.add_argument("--topk", type=int, default=3)
-    parser.add_argument("--temperature", type=float, default=0.7)
+    parser.add_argument("--temperature", type=float, default=0.0, help="0 = greedy decoding (default for all reported runs)")
     parser.add_argument("--retrieval-url", default="http://127.0.0.1:8000/retrieve")
     parser.add_argument("--retrieval-timeout", type=float, default=30)
     args = parser.parse_args()
 
     rows = load_rows(args.data, args.limit)
+    offset = 0
+    if args.shard:
+        shard_index, num_shards = (int(x) for x in args.shard.split("/"))
+        size = -(-len(rows) // num_shards)
+        offset = shard_index * size
+        rows = rows[offset : offset + size]
     tokenizer = AutoTokenizer.from_pretrained(args.model, padding_side="left")
     dtype = torch.bfloat16 if torch.cuda.is_available() else "auto"
     model = AutoModelForCausalLM.from_pretrained(
@@ -298,7 +331,7 @@ def main() -> None:
             correct += int(is_correct)
             total_search_calls += search_calls
             record = {
-                "index": i - 1,
+                "index": offset + i - 1,
                 "question": row["question"],
                 "answers": [answer for answer in answers if answer],
                 "completion": completion,
@@ -319,11 +352,16 @@ def main() -> None:
         "adapter": args.adapter,
         "mode": args.mode,
         "examples": len(rows),
+        "shard": args.shard,
         "correct": correct,
         "exact_match": correct / len(rows) if rows else 0.0,
         "search_calls": total_search_calls,
         "mean_search_calls": total_search_calls / len(rows) if rows else 0.0,
         "seconds": elapsed,
+        "temperature": args.temperature,
+        "max_new_tokens_per_turn": args.max_new_tokens,
+        "max_turns": args.max_turns,
+        "topk": args.topk,
         "predictions": str(args.output),
     }
     summary_path = args.output.with_suffix(".summary.json")

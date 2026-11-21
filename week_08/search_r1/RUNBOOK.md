@@ -153,6 +153,77 @@ JSON, training logs/curves, comparison CSV, and chart. Keep paper reference
 scores clearly separate from measured results. Add every group member's full
 name; every student submits their own Canvas entry and repository URL.
 
+## GB300 local execution (what was actually run)
+
+The Modal workspace stayed over its spend limit, so the replication ran on a
+reserved 8-hour single node (`pod4-gb300-2-tray10-f3`: 4x NVIDIA GB300, 284 GB
+each, aarch64 Grace, driver 595.58 / CUDA 13.2, 958 GB RAM). Nothing ran on
+Modal. GPU layout: GPU 0 GRPO, GPU 1 PPO, GPU 2/3 evaluation, GPU 3 also hosts
+the retriever.
+
+1. **Environment.** `setup_verl.sh` checkout at `verl.pin`, then
+   `uv sync --frozen --all-packages --extra sglang --extra fsdp` (torch 2.13
+   cu130, sglang 0.5.20, transformers 5.16.1, peft 0.19.1, flash-attn 2.8.3
+   aarch64 wheelhouse build) plus `faiss-cpu==1.12.0`, `matplotlib`. Apply
+   `verl_patches/0001-critic-ignore-ref-no-lora-flag.patch` (see below).
+2. **Assets** from Hugging Face: `PeterJinGo/nq_hotpotqa_train`,
+   `PeterJinGo/wiki-18-corpus` (the `.jsonl.gz` is really a tar.gz: extract
+   `wiki_dump.jsonl`, 21,015,324 lines), `PeterJinGo/wiki-18-e5-index`
+   (`cat part_aa part_ab > e5_Flat.index`), `intfloat/e5-base-v2`,
+   `Qwen/Qwen2.5-3B-Instruct`, and the two published Search-R1 3B-it checkpoints.
+3. **Data.** `python prepare_search_dataset.py --source-dir <nq_hotpotqa_train> --output-dir <processed>`
+   writes train (169,615), test (11,015), a fixed 512-row validation sample
+   (seed 42), and the 2/1-row smoke files; it fails if any Bamboogle question
+   appears in either split.
+4. **Retriever.** `gpu_retrieval_server.py` serves Search-R1's `/retrieve`
+   schema. It loads the official E5 Flat index, keeps the float32 vectors on one
+   GPU and runs exact inner-product top-k (identical to `IndexFlatIP`), with
+   Search-R1's E5 query encoding. `verify_retriever.py` compared it with
+   Search-R1's own encoder + CPU FAISS: identical top-3 ids for all probe
+   queries, max score difference 5e-7 (`results/retriever_check.json`); CPU
+   FAISS needs ~1.7 s per query here, the GPU service ~0.03 s.
+5. **Smokes.** `local_train_verl.py --algorithm {grpo,ppo} --steps 1 --batch-size 2 --rollouts 2`
+   both passed: real tool calls, logged EM rewards, LoRA checkpoint with
+   `lora_train_meta.json`, exported PEFT adapter (`results/runs/*-smoke/run_summary.json`).
+6. **Training.** GRPO and PPO ran concurrently on separate GPUs with identical
+   settings (the handover asked for sequential runs to control Modal spend; on
+   a fixed-length reservation concurrency doubles each run's budget without
+   changing the comparison):
+
+   ```bash
+   python local_train_verl.py --algorithm grpo --steps 300 --batch-size 64 --mini-batch-size 32 \
+     --micro-batch-size 16 --rollouts 5 --save-freq 25 --test-freq 25 --run-name grpo-main \
+     --data-dir <processed> --gpus 0
+   # same command with --algorithm ppo --run-name ppo-main --gpus 1
+   ```
+7. **Evaluation.** `eval_checkpoint.sh RUN STEP GPU` exports a checkpoint with
+   `verl.model_merger` and scores the adapter on all 125 questions in 5 shards
+   (`merge_eval_shards.py`); `watch_and_eval.sh` does this every 50 steps.
+   Baselines use `evaluate_bamboogle.py --mode direct|tool|search`.
+8. **Reports.** `summarize_results.py` -> `results/RESULTS.md`;
+   `plot_training.py` -> `results/training_curves.png`;
+   `compare_results.py` -> `results/comparison.{csv,png}`.
+
+### Fixes made while porting
+
+- `actor_rollout_ref.actor.checkpoint.save_lora_only` does not exist at the
+  pinned VeRL revision; PEFT checkpoints are recognised automatically.
+- VeRL's `multi_turn.max_tool_response_length` counts **characters**. The old
+  value 512 cut three passages (~1,800 chars) down to their first and last 256
+  characters; it is now 2048 (~500 tokens, Search-R1's `max_obs_length`).
+- Pinned-VeRL bug: `_compute_ref_log_prob` leaves `no_lora_adapter=True` in the
+  shared batch metadata, so PPO's (non-LoRA) critic crashed calling
+  `disable_adapter()`. The patch resets the flag for value inference only; the
+  actor/old-log-prob path was not affected (GRPO is unchanged by it).
+- `evaluate_bamboogle.py`: `--mode search` now wraps the Search-R1 prompt in the
+  chat template and formats observations exactly like Search-R1's `infer.py`;
+  stopping at `</search>` matches decoded text (token-id matching missed
+  merged tokens and let the model hallucinate its own `<information>`).
+  `--mode tool` now uses the training system prompt, VeRL's generated tool
+  schema, `search_tool.search` and VeRL's truncation. `--mode direct` asks for
+  an `<answer>` block so the same answer extraction applies. All modes default
+  to greedy decoding.
+
 ## Current checkpoint
 
 - Completed: source/data review, Bamboogle PDF/CSV cross-check, syntax check,
@@ -170,8 +241,11 @@ name; every student submits their own Canvas entry and repository URL.
   HotpotQA). The source test parquet also contains 125 Bamboogle rows; these
   and all other out-of-domain sources are excluded from validation to prevent
   benchmark leakage. Conversion and Parquet round-trip checks passed.
-- Not completed: VeRL tool-rollout smoke, actual model retrieval inference,
-  GRPO/PPO training, adapter evaluation, and measured result plots.
+- Completed on GB300 (2026-11-20): VeRL tool-rollout smokes for GRPO and PPO,
+  retrieval inference baselines, 150-step GRPO and PPO LoRA training, adapter
+  exports, Bamboogle evaluation every 50 steps, result tables and plots, and
+  the tiny-zero-lora starter run. See the GB300 section above and
+  `REPLICATION_REPORT.md`.
 - The post-run Modal billing summary showed $1,450.34 billed this month while
   the supplied banner showed a $1,200 budget. Billing is shared; the post-run
   active-container check showed no active containers. The API's spend-limit
