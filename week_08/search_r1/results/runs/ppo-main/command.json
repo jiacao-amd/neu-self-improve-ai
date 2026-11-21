@@ -1,7 +1,7 @@
 {
   "command": [
     "bash",
-    "/mnt/local/home/jiacao/neu-self-improve-ai/week_08/search_r1/train_verl.sh",
+    "/mnt/local/home/jiacao/rerun/search_r1/train_verl.sh",
     "ppo",
     "trainer.val_before_train=True",
     "trainer.save_freq=25",
@@ -14,7 +14,7 @@
     "MINI_BATCH_SIZE": "32",
     "MODEL_PATH": "Qwen/Qwen2.5-3B-Instruct",
     "NGPUS": "1",
-    "OUTPUT_DIR": "/mnt/local/home/jiacao/neu-self-improve-ai/week_08/search_r1/results/runs/ppo-main",
+    "OUTPUT_DIR": "/mnt/local/home/jiacao/rerun/search_r1/results/runs/ppo-main",
     "ROLLOUT_N": "5",
     "SEARCH_R1_LOG_REWARD": "1",
     "SEARCH_R1_RETRIEVAL_URL": "http://127.0.0.1:8000/retrieve",

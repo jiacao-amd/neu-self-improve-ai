@@ -8,13 +8,13 @@
     "inference_mode": false,
     "r": 16,
     "target_modules": [
-        "gate_proj",
-        "o_proj",
-        "k_proj",
-        "down_proj",
-        "q_proj",
         "up_proj",
-        "v_proj"
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "q_proj",
+        "down_proj",
+        "k_proj"
     ],
     "exclude_modules": null,
     "lora_alpha": 32,

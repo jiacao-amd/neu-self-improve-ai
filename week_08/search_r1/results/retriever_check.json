@@ -55,6 +55,6 @@
     ]
   ],
   "max_abs_score_diff": 5.364418029785156e-07,
-  "cpu_faiss_seconds": 8.661462306976318,
-  "gpu_service_seconds": 0.17135143280029297
+  "cpu_faiss_seconds": 8.347585916519165,
+  "gpu_service_seconds": 1.9815895557403564
 }

@@ -124,18 +124,17 @@ implementation details and smoke-run sequence.
 
 ## Results
 
-All numbers below were measured on the GB300 node on 2026-11-20 and are
-backed by files in `results/`. Bamboogle scores use all 125 questions, greedy
-decoding, wiki-18 E5 Flat retrieval with top-3 passages, up to 4 turns of at
-most 512 new tokens. `results/RESULTS.md` is the generated table;
+All numbers below were measured on a reserved GB300 node and are backed by
+files in `results/`. Bamboogle scores use all 125 questions, greedy decoding,
+wiki-18 E5 Flat retrieval with top-3 passages, up to 4 turns of at most 512
+new tokens. `results/RESULTS.md` is the generated table;
 `results/comparison.{csv,png}` and `results/training_curves.png` are the charts.
 
 ### Compute and setup actually used
 
-- Hardware: one node, 4x NVIDIA GB300 (284 GB each, aarch64 Grace host),
-  reserved 2026-11-20 14:45–22:45 PST. GRPO trained on GPU 0 and PPO on GPU 1
-  **concurrently**, with identical settings; GPU 2/3 ran evaluation and the
-  retriever. No Modal compute was used.
+- Hardware: one node, 4x NVIDIA GB300 (284 GB each, aarch64 Grace host).
+  GRPO trained on GPU 0 and PPO on GPU 1 **concurrently**, with identical
+  settings; GPU 2/3 ran evaluation and the retriever. No Modal compute was used.
 - Software: VeRL `453954b3` (+ the one-line critic patch in `verl_patches/`),
   sglang 0.5.20 rollouts, FSDP actor, torch 2.13 / CUDA 13.0.
 - Policy: Qwen2.5-3B-Instruct + LoRA r=16, alpha=32, dropout 0.0 (VeRL
@@ -150,10 +149,11 @@ most 512 new tokens. `results/RESULTS.md` is the generated table;
   32 prompts, max 4 assistant turns, 2,048 response tokens, tool responses
   truncated to 2,048 characters. Reward = exact match of the last
   `<answer>` block only. Retrieved text is masked out of the policy loss.
-- Budget: both runs were stopped at **step 150** (planned, see
-  `results/runs/*/planned_stop.json`): 9,600 prompts / 48,000 trajectories per
-  algorithm, about 5.7% of one epoch. The paper used ~1,000 steps x 512 prompts
-  with full fine-tuning, so these are short, compute-limited runs.
+- Budget: both runs used the 300-step schedule and were stopped at **step
+  100** (planned, see `results/runs/*/planned_stop.json`): 6,400 prompts /
+  32,000 trajectories per algorithm, about 3.8% of one epoch (GRPO 1.7 h, PPO
+  1.9 h of training). The paper used ~1,000 steps x 512 prompts with full
+  fine-tuning, so these are short, compute-limited runs.
 
 ### Bamboogle exact match (125 questions)
 
@@ -163,60 +163,63 @@ most 512 new tokens. `results/RESULTS.md` is the generated table;
 | Qwen2.5-3B-Instruct + search tool, untrained | tool | 0.184 | 23/125 | 1.55 | — |
 | Published Search-R1 PPO checkpoint (full FT) | search | 0.240 | 30/125 | 1.97 | 0.264 |
 | Published Search-R1 GRPO checkpoint (full FT) | search | 0.344 | 43/125 | 1.92 | 0.232 |
-| **Ours: LoRA GRPO, step 150** | tool | 0.312 | 39/125 | 2.23 | (0.232) |
-| **Ours: LoRA PPO, step 150** | tool | 0.208 | 26/125 | 2.10 | (0.264) |
+| **Ours: LoRA GRPO, step 100** | tool | 0.304 | 38/125 | 1.95 | (0.232) |
+| **Ours: LoRA PPO, step 100** | tool | 0.160 | 20/125 | 1.30 | (0.264) |
 
 Intermediate checkpoints (same evaluator):
 
-| Step | 0 (untrained) | 25 | 50 | 100 | 150 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| LoRA GRPO | 0.184 | 0.248 | 0.264 | 0.280 | 0.312 |
-| LoRA PPO | 0.184 | 0.176 | 0.104 | 0.168 | 0.208 |
+| Step | 0 (untrained) | 25 | 50 | 100 |
+| --- | ---: | ---: | ---: | ---: |
+| LoRA GRPO | 0.184 | 0.232 | 0.208 | 0.304 |
+| LoRA PPO | 0.184 | 0.184 | 0.080 | 0.160 |
 
 In-domain validation EM (512 NQ/HotpotQA questions, greedy):
 
-| Step | 0 | 25 | 50 | 75 | 100 | 125 | 150 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| LoRA GRPO | 0.184 | 0.295 | 0.330 | 0.311 | 0.354 | 0.365 | 0.342 |
-| LoRA PPO | 0.180 | 0.279 | 0.283 | 0.299 | 0.303 | 0.326 | 0.318 |
+| Step | 0 | 25 | 50 | 75 | 100 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| LoRA GRPO | 0.162 | 0.322 | 0.316 | 0.314 | 0.332 |
+| LoRA PPO | 0.168 | 0.279 | 0.258 | 0.316 | 0.289 |
+
+(The two step-0 values are the same untrained model; they differ because
+VeRL's sglang validation is not bit-for-bit deterministic across runs.)
 
 ### Findings
 
 1. **Search matters.** Direct answering gets 4/125; giving the same untrained
-   model the search tool already gives 23/125, and every search-trained model
-   is higher still. This matches the paper's direct-inference reference
-   (0.024 vs our 0.032).
+   model the search tool already gives 23/125, and the search-trained GRPO
+   model and both published models are higher still. This matches the paper's
+   direct-inference reference (0.024 vs our 0.032).
 2. **The evaluation pipeline reproduces the published models.** The released
    Search-R1 PPO checkpoint scores 0.240 (paper 0.264, 3 questions fewer); the
    released GRPO checkpoint scores 0.344, above the paper's 0.232. We use greedy
    decoding and exact top-3 retrieval over the same corpus/index; the paper's
    exact decoding settings for this table are not stated, so the GRPO gap is
    reported as observed rather than explained away.
-3. **LoRA GRPO improved steadily** both in-domain (0.18 -> 0.34–0.37) and on
-   out-of-domain Bamboogle (0.184 -> 0.312), already above the paper's
-   full-FT GRPO number after only 150 small steps — but under a different tool
-   protocol (see limitations), so this is not a like-for-like comparison with
-   the paper.
-4. **LoRA PPO improved in-domain, but only reached Bamboogle late.** Its
-   in-domain validation EM rose from 0.180 to 0.318 (GRPO: 0.342 at step 150),
-   but its Bamboogle EM first fell below the untrained model (0.104 at step 50)
-   and only ended slightly above it (0.208 at step 150, vs GRPO's 0.312). The
-   trajectories explain why: around step 50 PPO collapsed to answering after a
-   single search (105/125 Bamboogle questions used one search, training
-   responses ~600 tokens). One search is often enough for single-hop NQ, but
-   not for Bamboogle's two-hop questions. GRPO instead moved to 2–3 searches
-   (118/125 questions with >= 2 searches at step 100). PPO's KL to the
-   reference spiked to ~0.25 during that phase (early in training, with a
-   freshly initialised value critic); it later relaxed, and by step 150 PPO
-   was back to multi-search behaviour (96/125 questions with >= 2 searches).
-   A plausible reason GRPO is more sample-efficient in a 150-step budget is
-   that its group-relative baseline needs no critic warm-up. The paper reports
-   PPO as more stable than GRPO over ~1,000 steps; our runs are far too short
-   to test that claim. PPO also left more answers unfinished at step 150 (23/125
-   completions without an `<answer>` block, vs 12/125 for GRPO).
+3. **LoRA GRPO improved** both in-domain (0.16 -> 0.33) and on out-of-domain
+   Bamboogle (0.184 -> 0.304), already above the paper's full-FT GRPO number
+   after only 100 small steps — but under a different tool protocol (see
+   limitations), so this is not a like-for-like comparison with the paper. The
+   Bamboogle curve is not monotonic (0.232 at step 25, 0.208 at step 50); with
+   125 questions a dip of 3 questions is within noise.
+4. **LoRA PPO improved in-domain but not on Bamboogle.** Its in-domain
+   validation EM rose from 0.168 to 0.289–0.316 (GRPO: 0.314–0.332), but its
+   Bamboogle EM fell well below the untrained model (0.080 at step 50) and was
+   still below it at step 100 (0.160 vs 0.184; GRPO 0.304). The trajectories
+   explain why: around step 50 PPO collapsed to answering after a single
+   search (113/125 Bamboogle questions used one search; training responses
+   ~570 tokens vs ~1,190 for GRPO). One search is often enough for single-hop
+   NQ, but not for Bamboogle's two-hop questions. GRPO kept searching two or
+   more times (113/125 questions at step 50, 101/125 at step 100). PPO's KL to
+   the reference rose to ~0.35 during that phase (GRPO stayed below 0.14),
+   early in training with a freshly initialised value critic; by step 100 PPO
+   was only partly back to multi-search behaviour (37/125 questions with >= 2
+   searches). A plausible reason GRPO is more sample-efficient in a 100-step
+   budget is that its group-relative baseline needs no critic warm-up. The
+   paper reports PPO as more stable than GRPO over ~1,000 steps; our runs are
+   far too short to test that claim.
 5. **PEFT is enough to learn the behaviour.** A 30M-parameter LoRA adapter
    (~1% of the 3B weights; 60 MB `adapter_model.safetensors`) changed search
-   behaviour and accuracy substantially; KL to the base stayed below ~0.25.
+   behaviour and accuracy substantially; KL to the base stayed below ~0.4.
 
 ### Class starter reproduction (tiny-zero-lora, separate from Search-R1)
 
@@ -225,28 +228,15 @@ The starter at commit `3659acfa` was run unchanged except for
 (`results/tiny_zero_starter/reduced_config.diff`), with its pinned
 requirements (TRL 1.17.1, vLLM 0.32.0, PEFT 0.21.2) on one GB300: Countdown
 GRPO, LoRA r=16/alpha=32/dropout 0.05, 16 generations. It finished 60 steps in
-6.6 minutes and saved the LoRA adapter and `checkpoint-60`. Held-out format
-rate rose from 32.5% to 96.0% and solve rate from 4.0% to 7.5%; this run only
-demonstrates that the starter works and is **not** a Search-R1 result.
-
-### Re-run on a second node
-
-The intermediate, smoke and tiny-zero adapters of the run above were lost when
-the first reservation ended. They were regenerated on a second GB300 node with
-the same code, configuration and seed, training GRPO and PPO to step 100
-(`results/rerun/`). The re-run reproduces the findings: LoRA GRPO reached
-0.304 Bamboogle EM at step 100 (original run: 0.280), and LoRA PPO again fell
-below the untrained model around step 50 (0.080; original 0.104) after
-collapsing to single-search answers (113/125 questions), recovering to 0.160
-at step 100 (original 0.168). Same-step differences of up to ~0.06 EM between
-the two runs show the size of run-to-run variance at this budget. All headline
-numbers in this report are from the original run.
+5.8 minutes and saved the LoRA adapter. Held-out format rate rose from 32.5%
+to 98.0% and solve rate from 4.0% to 4.5%; this run only demonstrates that the
+starter works and is **not** a Search-R1 result.
 
 ### Limitations
 
-- **Short runs.** 150 steps x 64 prompts per algorithm, one seed. Differences
+- **Short runs.** 100 steps x 64 prompts per algorithm, one seed. Differences
   of a few Bamboogle questions are within noise (1 question = 0.008 EM; a 95%
-  binomial interval at EM 0.28 is roughly +/-0.08).
+  binomial interval at EM 0.30 is roughly +/-0.08).
 - **Different tool protocol from the paper.** Our policies use Qwen's native
   function-calling format (`<tool_call>` / `<tool_response>`) through VeRL's
   tool agent, with our own system prompt; the published checkpoints use the

@@ -9,12 +9,12 @@
     "r": 16,
     "target_modules": [
         "o_proj",
-        "up_proj",
+        "v_proj",
+        "gate_proj",
         "q_proj",
         "k_proj",
-        "v_proj",
         "down_proj",
-        "gate_proj"
+        "up_proj"
     ],
     "exclude_modules": null,
     "lora_alpha": 32,

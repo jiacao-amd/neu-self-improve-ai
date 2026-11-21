@@ -156,7 +156,7 @@ name; every student submits their own Canvas entry and repository URL.
 ## GB300 local execution (what was actually run)
 
 The Modal workspace stayed over its spend limit, so the replication ran on a
-reserved 8-hour single node (`pod4-gb300-2-tray10-f3`: 4x NVIDIA GB300, 284 GB
+reserved single node (4x NVIDIA GB300, 284 GB
 each, aarch64 Grace, driver 595.58 / CUDA 13.2, 958 GB RAM). Nothing ran on
 Modal. GPU layout: GPU 0 GRPO, GPU 1 PPO, GPU 2/3 evaluation, GPU 3 also hosts
 the retriever.
@@ -181,7 +181,7 @@ the retriever.
    Search-R1's E5 query encoding. `verify_retriever.py` compared it with
    Search-R1's own encoder + CPU FAISS: identical top-3 ids for all probe
    queries, max score difference 5e-7 (`results/retriever_check.json`); CPU
-   FAISS needs ~1.7 s per query here, the GPU service ~0.03 s.
+   FAISS needs ~1.7 s per query here.
 5. **Smokes.** `local_train_verl.py --algorithm {grpo,ppo} --steps 1 --batch-size 2 --rollouts 2`
    both passed: real tool calls, logged EM rewards, LoRA checkpoint with
    `lora_train_meta.json`, exported PEFT adapter (`results/runs/*-smoke/run_summary.json`).
@@ -196,9 +196,13 @@ the retriever.
      --data-dir <processed> --gpus 0
    # same command with --algorithm ppo --run-name ppo-main --gpus 1
    ```
+
+   Both runs were stopped at step 100 with `stop_at_step.sh RUN 100`, which
+   waits for the step-100 checkpoint and validation before terminating the
+   trainer; `finalize_run_summary.py` then records the planned stop.
 7. **Evaluation.** `eval_checkpoint.sh RUN STEP GPU` exports a checkpoint with
    `verl.model_merger` and scores the adapter on all 125 questions in 5 shards
-   (`merge_eval_shards.py`); `watch_and_eval.sh` does this every 50 steps.
+   (`merge_eval_shards.py`); `watch_and_eval.sh` does this at steps 25, 50 and 100.
    Baselines use `evaluate_bamboogle.py --mode direct|tool|search`.
 8. **Reports.** `summarize_results.py` -> `results/RESULTS.md`;
    `plot_training.py` -> `results/training_curves.png`;
@@ -241,9 +245,9 @@ the retriever.
   HotpotQA). The source test parquet also contains 125 Bamboogle rows; these
   and all other out-of-domain sources are excluded from validation to prevent
   benchmark leakage. Conversion and Parquet round-trip checks passed.
-- Completed on GB300 (2026-11-20): VeRL tool-rollout smokes for GRPO and PPO,
-  retrieval inference baselines, 150-step GRPO and PPO LoRA training, adapter
-  exports, Bamboogle evaluation every 50 steps, result tables and plots, and
+- Completed on GB300: VeRL tool-rollout smokes for GRPO and PPO,
+  retrieval inference baselines, 100-step GRPO and PPO LoRA training, adapter
+  exports, Bamboogle evaluation at steps 25/50/100, result tables and plots, and
   the tiny-zero-lora starter run. See the GB300 section above and
   `REPLICATION_REPORT.md`.
 - The post-run Modal billing summary showed $1,450.34 billed this month while

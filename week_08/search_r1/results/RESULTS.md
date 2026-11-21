@@ -8,18 +8,16 @@
 | Qwen2.5-3B-Instruct + search tool, untrained | tool | 0.184 | 23/125 | 1.55 | n/a |
 | Published Search-R1 PPO checkpoint (full FT) | search | 0.240 | 30/125 | 1.97 | 0.264 (33/125) |
 | Published Search-R1 GRPO checkpoint (full FT) | search | 0.344 | 43/125 | 1.92 | 0.232 (29/125) |
-| Ours: LoRA GRPO, step 25 | tool | 0.248 | 31/125 | 1.89 |  |
-| Ours: LoRA GRPO, step 50 | tool | 0.264 | 33/125 | 1.90 |  |
-| Ours: LoRA GRPO, step 100 | tool | 0.280 | 35/125 | 2.30 |  |
-| Ours: LoRA GRPO, step 150 | tool | 0.312 | 39/125 | 2.23 | 0.232 (29/125), full FT |
-| Ours: LoRA PPO, step 25 | tool | 0.176 | 22/125 | 1.34 |  |
-| Ours: LoRA PPO, step 50 | tool | 0.104 | 13/125 | 1.17 |  |
-| Ours: LoRA PPO, step 100 | tool | 0.168 | 21/125 | 1.48 |  |
-| Ours: LoRA PPO, step 150 | tool | 0.208 | 26/125 | 2.10 | 0.264 (33/125), full FT |
+| Ours: LoRA GRPO, step 25 | tool | 0.232 | 29/125 | 2.32 |  |
+| Ours: LoRA GRPO, step 50 | tool | 0.208 | 26/125 | 2.22 |  |
+| Ours: LoRA GRPO, step 100 | tool | 0.304 | 38/125 | 1.95 | 0.232 (29/125), full FT |
+| Ours: LoRA PPO, step 25 | tool | 0.184 | 23/125 | 1.62 |  |
+| Ours: LoRA PPO, step 50 | tool | 0.080 | 10/125 | 1.08 |  |
+| Ours: LoRA PPO, step 100 | tool | 0.160 | 20/125 | 1.30 | 0.264 (33/125), full FT |
 
 ## Training runs (NQ + HotpotQA, 64 prompts x 5 rollouts per step)
 
 | Run | Last logged step | Val EM @ step (512 in-domain questions) | Train reward, first 10 steps | Train reward, last 10 steps | KL loss, last 10 | Mean s/step |
 | --- | ---: | --- | ---: | ---: | ---: | ---: |
-| grpo-main | 150 | 0: 0.184, 25: 0.295, 50: 0.330, 75: 0.311, 100: 0.354, 125: 0.365, 150: 0.342 | 0.249 | 0.435 | 0.2124 | 54.9 |
-| ppo-main | 150 | 0: 0.180, 25: 0.279, 50: 0.283, 75: 0.299, 100: 0.303, 125: 0.326, 150: 0.318 | 0.197 | 0.405 | 0.1830 | 62.2 |
+| grpo-main | 100 | 0: 0.162, 25: 0.322, 50: 0.316, 75: 0.314, 100: 0.332 | 0.249 | 0.408 | 0.1111 | 57.5 |
+| ppo-main | 100 | 0: 0.168, 25: 0.279, 50: 0.258, 75: 0.316, 100: 0.289 | 0.202 | 0.368 | 0.3150 | 64.6 |
