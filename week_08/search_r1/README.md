@@ -90,27 +90,22 @@ the exact commands.
 All adapters are PEFT LoRA adapters (r=16, alpha=32, q/k/v/o/gate/up/down
 projections) for `Qwen/Qwen2.5-3B-Instruct`.
 
-- **Final adapters (in this repo):**
-  `results/runs/grpo-main/adapter-export/lora_adapter/` and
-  `results/runs/ppo-main/adapter-export/lora_adapter/` (step 150).
-- **Intermediate, smoke and starter adapters:** attached to the
-  [`adapters-v1` release](https://github.com/jiacao-amd/neu-self-improve-ai/releases/tag/adapters-v1)
-  (each `.tar` contains the adapter folder; `SHA256SUMS` lists checksums):
+- **Published (in this repo):** the final step-150 adapters that produced the
+  reported Bamboogle scores:
+  - `results/runs/grpo-main/adapter-export/lora_adapter/` (GRPO, EM 0.312)
+  - `results/runs/ppo-main/adapter-export/lora_adapter/` (PPO, EM 0.208)
+- **Not published:** the intermediate step-25/50/100 adapters, the one-step
+  smoke adapters and the tiny-zero-lora starter adapter. They were not
+  uploaded before the GB300 reservation ended and are no longer available.
+  Their Bamboogle predictions and summaries are still in `results/bamboogle/`,
+  and their training metrics are in `results/runs/*/metrics.jsonl`.
 
-  | Asset | Contents | Bamboogle EM |
-  | --- | --- | ---: |
-  | `grpo-lora-step25.tar`, `-step50`, `-step100` | Search-R1 LoRA GRPO checkpoints | 0.248 / 0.264 / 0.280 |
-  | `ppo-lora-step25.tar`, `-step50`, `-step100` | Search-R1 LoRA PPO checkpoints | 0.176 / 0.104 / 0.168 |
-  | `grpo-smoke-lora-step1.tar`, `ppo-smoke-lora-step1.tar` | one-step integration smokes (not trained models) | — |
-  | `tiny-zero-countdown-lora-step60.tar` | tiny-zero-lora Countdown starter, 60 steps (not Search-R1) | — |
-
-Load an adapter and evaluate it with the same tool protocol used in training:
+Evaluate a published adapter with the same tool protocol used in training:
 
 ```bash
-gh release download adapters-v1 -R jiacao-amd/neu-self-improve-ai -p grpo-lora-step100.tar
-tar -xf grpo-lora-step100.tar   # -> lora_adapter/
-python3 evaluate_bamboogle.py --mode tool --adapter lora_adapter \
-  --retrieval-url http://127.0.0.1:8000/retrieve --output results/bamboogle/grpo_step100.jsonl
+python3 evaluate_bamboogle.py --mode tool \
+  --adapter results/runs/grpo-main/adapter-export/lora_adapter \
+  --retrieval-url http://127.0.0.1:8000/retrieve --output results/bamboogle/grpo_step150_rerun.jsonl
 ```
 
 ## Sources
