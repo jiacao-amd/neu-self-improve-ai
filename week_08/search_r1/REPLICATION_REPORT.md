@@ -229,6 +229,19 @@ GRPO, LoRA r=16/alpha=32/dropout 0.05, 16 generations. It finished 60 steps in
 rate rose from 32.5% to 96.0% and solve rate from 4.0% to 7.5%; this run only
 demonstrates that the starter works and is **not** a Search-R1 result.
 
+### Re-run on a second node
+
+The intermediate, smoke and tiny-zero adapters of the run above were lost when
+the first reservation ended. They were regenerated on a second GB300 node with
+the same code, configuration and seed, training GRPO and PPO to step 100
+(`results/rerun/`). The re-run reproduces the findings: LoRA GRPO reached
+0.304 Bamboogle EM at step 100 (original run: 0.280), and LoRA PPO again fell
+below the untrained model around step 50 (0.080; original 0.104) after
+collapsing to single-search answers (113/125 questions), recovering to 0.160
+at step 100 (original 0.168). Same-step differences of up to ~0.06 EM between
+the two runs show the size of run-to-run variance at this budget. All headline
+numbers in this report are from the original run.
+
 ### Limitations
 
 - **Short runs.** 150 steps x 64 prompts per algorithm, one seed. Differences

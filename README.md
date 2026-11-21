@@ -11,7 +11,9 @@ Bamboogle set. Start with:
 - [`week_08/search_r1/REPLICATION_REPORT.md`](week_08/search_r1/REPLICATION_REPORT.md) — background, protocol, results, limitations
 - [`week_08/search_r1/RUNBOOK.md`](week_08/search_r1/RUNBOOK.md) — exact commands used on the GB300 node
 - [`week_08/search_r1/results/RESULTS.md`](week_08/search_r1/results/RESULTS.md) — generated result tables
-- LoRA adapters: the final step-150 GRPO/PPO adapters are under `week_08/search_r1/results/runs/*-main/adapter-export/lora_adapter/`
+- LoRA adapters: the final step-150 GRPO/PPO adapters are under `week_08/search_r1/results/runs/*-main/adapter-export/lora_adapter/`;
+  re-run intermediate (steps 25/50/100), smoke and tiny-zero adapters are under
+  [`week_08/search_r1/results/rerun/`](week_08/search_r1/results/rerun/README.md)
 
 | Bamboogle EM (125 questions) | Measured | Paper |
 | --- | ---: | ---: |
