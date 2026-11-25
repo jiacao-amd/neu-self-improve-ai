@@ -26,3 +26,22 @@ Bamboogle set. Start with:
 
 ![Bamboogle comparison](week_08/search_r1/results/comparison.png)
 ![Training curves](week_08/search_r1/results/training_curves.png)
+
+## Week 9 Final Project Part 1 — AgentFlow on Bamboogle (`week_09`)
+
+Replication of [AgentFlow](https://github.com/lupantech/AgentFlow) (In-the-Flow
+Agentic System Optimization) Table 1 rows for Bamboogle with
+Qwen-2.5-7B-Instruct and a LoRA Flow-GRPO planner, using only local models and
+a local Wikipedia index (no paid APIs). Start with:
+
+- [`week_09/README.md`](week_09/README.md) — what changed from the official code and how to run it
+- [`week_09/results/RUN_REPORT.md`](week_09/results/RUN_REPORT.md) — measured results, reward trend, runtime, deviations, limitations
+- Final planner LoRA adapter: [`week_09/results/flowgrpo-step25/lora_adapter/`](week_09/results/flowgrpo-step25/lora_adapter/)
+
+| Bamboogle (125 questions) | Judge accuracy | Rule EM | Paper |
+| --- | ---: | ---: | ---: |
+| Qwen-2.5-7B-Instruct, direct | 9.6% | 6.4% | 12.0% |
+| AgentFlow, base planner | 28.8% | 14.4% | 58.4% |
+| AgentFlow, Flow-GRPO planner (LoRA, 25 steps) | 29.6% | 12.8% | 69.6% |
+
+![Flow-GRPO reward curve](week_09/results/reward_curve.png)
